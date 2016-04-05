@@ -13,13 +13,29 @@ import os
 import random
 import re
 import sys
+import unittest
+import warnings
 
 class Genes:
+    '''
+    This class holds information about features.
+
+    It provides functions to index positions in the genome according to four different partitions:
+        1. First codon position
+        2. Second codon position
+        3. Third codon position
+        4. Shared codon position --- for positions that are shared with multiple genes
+        5. Other positions --- positions not annotated, or with annotations other than CDS
+    '''
     def __init__(self):
         self.features = {}
         self.snippy_list = []
-    def load_features(self, path, gene_list = None, feature = 'gene', nb = None, cod_tab = 11):
-        # load features
+    def load_genome(self, path ):
+        '''
+        This functions loads the genome data from a Genbank file
+
+        Currently, it will only process a single locus. It should allow for multiple loci in the future.
+        '''
         try:
             genome = SeqIO.read(path, 'genbank')
         except IOError:
@@ -37,8 +53,10 @@ class Genes:
                 genome = g
                 break
         self.reference = genome # added to be able to add reference
-        # load features to keep
-        #import pdb; pdb.set_trace()
+    def load_features( self, gene_list = None, feature = 'CDS', nb = None, cod_tab = 11 ):
+        '''
+        This function will take all the genes in gene list or produced by parsing snippy core file and parse them out of the genome information.
+        '''
         if gene_list != None:
             try:
                 fn = open(gene_list, 'r')
@@ -50,6 +68,9 @@ class Genes:
             except IOError:
                 print("Could not open file {}".format(feature_list))
         else:
+            # if this function is run after parse snippy_core
+            # otherwise, it will make an empty list. This will be a
+            # a problem below
             feature_set = self.snippy_list
 
         # create a string for features to allow for some fuzzy pattern matching
@@ -157,12 +178,121 @@ class Genes:
         else:
             self.snippy_list = cds_var
         print("Found {} variable genes, and picked {}.".format(len(cds_var), len(self.snippy_list)))
+    def index_locations( self, feature_type = 'CDS' ):
+        '''
+        Function will index sites by codon position.
+        There will be 5 categories:
+            first_codon <- first codon position
+            second_codon <- second codon position
+            third_codon <- third codon position
+            fourth_codon <- position is located in overlapping CDS regions and could be at different codon positions depending on which annotation is considered
+            non_coding <- a position not found within an annotated CDS region
+
+        The function will first annotate positions into one of the first four categories, and then figure out which positions are not annotated to put in non_coding.
+
+        The code will cycle through features in self.genome (should allow for multiple genomes i.e., multi-genbank file)
+        if feature.type == 'CDS',
+        (will need here six lists, one for each category above, and another to keep track of all annotated positions (union of first-fourth codon positions))
+        then figure out strand
+            if positive, take location start = start and end = end ( should check what it is doing because Python is 0-base)
+            else, take location start = end, end = start
+        for each codon position, check
+        if position is already in annotated_positions list
+            check if already in fourth_codon,
+                if not in fourth_codon but already in annotated list,
+                    add to fourth_codon list, and deleted from appropriate list
+                if presend in fourth_codon, do nothing
+        else
+            add to appropriate first-third_codon list, and to annotated_list
+
+        for non_coding, create iterator with positions 1 to length of genome.
+        iterate through returning only positions not in annotated_positions
+        feature_start = genome.feature.location.start
+        feature_end = genome.feature.location.end + 1 (we add the +1 because BioPython codes the positions as starting at 0, but we to have things starting at 1)
+        THESE POSITIONS ARE THE SAME IF FEATURE IS IN POSITIVE OR NEGATIVE STRAND, BUT CODON POSITIONS ARE REVERSED
+        if strand is positive (i.e., not reverse complement), then first, second, and third codon positions can be found thus:
+            for codon_pos in 1:3: (codon positions are coded from 1 to 3, we can then add to the codon start position to have a natural, starting at 1, positions)
+                codon_positions = range( feature_start + codon_pos, feature_end, 3 )
+        else:
+            for codon_pos in 1:3: (codon positions are coded from 1 to 3, BUT MEAN 3 TO 1 IN THIS CASE, we can then add to the codon start position to have a natural, starting at 1, positions)
+                codon_positions = range( feature_start + codon_pos, feature_end, 3 )
+
+        SOME ASSUMPTIONS:
+            1. NO FUZZY POSITIONS --- START AND END OF FEATURES IS CODED WITH CERTAINY
+            2. CODING REGIONS ALWAYS START AT POSITION -1 OR 1, SO STRAND IS ALWAYS -1 OR 1
+
+        The naive implementation takes about 60 seconds to index about 100K  sites. Not ideal. It should be faster.
+        A Pandas implementation might be faster:
+        Here, we would mirror something close to the implementation done in R.
+        '''
+        # find all features
+        n_features = 0
+        # creating the index position dictionary
+        self.index_positions = {}
+        self.index_positions['first_codon'] = []
+        self.index_positions['second_codon'] = []
+        self.index_positions['third_codon'] = []
+        self.index_positions['fourth_codon'] = []
+        self.index_positions['unannotated'] = []
+        self.index_positions['annotated'] = []
+        codon_indexes = ['first_codon', 'second_codon', 'third_codon']
+        for feature in self.reference.features:
+            if feature.type in feature_type:
+                n_features = n_features + 1
+                feature_start = feature.location.start
+                feature_end = feature.location.end + 1
+                feature_strand = feature.strand
+                # check if strand is different from -1 to 1, and if it is different, then issue warning (try to issue warning with locus tag) and
+                # add the positions to the index_positions['annotated'] so it they will be ignored. Then skip to next feature
+                # eventually, we can add support for different strand starting positions
+                if feature_strand not in [-1, 1]:
+                    try:
+                        warnings.warn( 'Feature with locus_tag {} had strand starting at {}. Beastify currently does not support correct implementation of this offset. Positions will be ignored'.format( feature.qualifiers['locus_tag'][0], feature_strand ) )
+                    except:
+                        warnings.warn( 'Feature between positions {}..{} had strand starting at {}. Beastify currently does not support correct implementation of this offset. Positions will be ignored'.format( feature_start, feature_end, feature_strand ) )
+                    self.index_positions['annotated'].append( range( feature_start + 1, feature_end + 1 ) )
+                    continue
+                # if the feature strand is 1 then assign the first_codon, second_codon, and third_codon position to 1,2,3
+                # else if the feature strand is -1 then assign the first_codon, second_codon, and third_codon position to 3,2,1
+                if feature_strand == 1:
+                    (fc, sc, tc) = (0,1,2)
+                else:
+                    (fc, sc, tc) = (2,1,0)
+                positions = {}
+                # generate the indexes
+                for codon_pos in [1,2,3]:
+                    positions[codon_pos] = range( feature_start + codon_pos, feature_end, 3 )
+                #### now run the checks
+                for codon_pos in [fc, sc, tc]:
+                    sites = positions[codon_pos + 1]
+                    for site in sites:
+                        if site in self.index_positions['annotated']:
+                            if site not in self.index_positions['fourth_codon']:
+                                self.index_positions['fourth_codon'].append( site )
+                                ## because we are not keeping track, we don't know where this site could be
+                                ## so we should try each, until successful. there might be a better way of doing this
+                                for cpos in codon_indexes:
+                                    try:
+                                        self.index_positions[ cpos ].remove( site )
+                                        break
+                                    except:
+                                        pass
+                            else:
+                                continue
+                        else:
+                            self.index_positions[ codon_indexes[codon_pos] ].append( site )
+                            self.index_positions['annotated'].append( site )
+        for k in self.index_positions.keys():
+            print( "Found {} sites in {}.".format( len( self.index_positions[k] ), k ) )
+        print( "Found {} features that match CDS".format( n_features ) )
+        self.summary_index = n_features
+        return n_features
+
 class Isolate:
     def __init__(self):
         self.id = ''
         self.seq = ''
         self.genes = {}
-#        self.concat = ''
     def __str__(self):
         if self.id != '':
             return("Isolate: {} (Total bases: {})".format(self.id, len(self.seq)))
@@ -354,6 +484,49 @@ class Collection:
 
         return
 
+class TestBeastify(unittest.TestCase):
+    '''
+    A class for unit testing...
+    To run:
+    $> python -m unittest beastify.TestBeastify
+    '''
+    def setUp(self):
+        '''
+        Create class Genes to test
+        '''
+        reference = "test_data/test.gbk"
+        self.genes = Genes()
+        self.genes.load_genome( path = reference )
+    def test_genes_load_genome(self):
+        '''
+        Tests if Genbank file is loaded correctly
+        '''
+        self.assertEqual( self.genes.reference.id , 'NC_007795.1' )
+    def test_genes_genome_size(self):
+        '''
+        Test if Genbank file loaded with appropriate size
+        '''
+        self.assertEqual( len( self.genes.reference ), 100801 )
+    def test_genes_index_locations(self):
+        '''
+        Test if genome indexing works
+        Should result in the following count for each partition in the test dataset (results based on R implementation)
+        First codon position: 29,513
+        Second codon position: 29,514
+        Third codon position: 29,513
+        Fourth codon position: 109
+        Unannotated: 12,152
+        '''
+        self.genes.index_locations()
+        self.assertEqual( self.genes.summary_index, 83 )
+
+def run_tests(ctx, param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestBeastify)
+    unittest.TextTestRunner(verbosity=2).run(suite)
+    ctx.exit()
+
 
 @click.command()
 @click.option("--nb", \
@@ -367,8 +540,8 @@ class Collection:
                 help="Use snippy-core, and filter with 'random' or 'top' or 'all' (default: all). If specified 'random' or 'top', then --n must be specified too.", \
                 default = "all")
 @click.option("--feature", \
-                help="Feature name to search in Genbank file (default: gene)", \
-                default = "gene")
+                help="Feature name to search in Genbank file (default: CDS)", \
+                default = "CDS")
 @click.option("--info",
                 help = "Path to a tab-delimited file with two or more columns. The first column has the isolate ID, and other columns have dates, location, etc. The information will be added to the isolate ID in the same order as the columns",\
                 default = None)
@@ -388,9 +561,10 @@ class Collection:
                 help = "Whether to include the reference in the final out file (default: False)", \
                 is_flag = True, \
                 default = False)
+@click.option("--test", is_flag=True, default=False, callback=run_tests, expose_value=False, is_eager = True)
 @click.argument("reference")
 @click.argument("path")
-def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_filename, seq_filename, exclude, inc_ref):
+def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_filename, seq_filename, exclude, inc_ref, test):
     '''
     REFERENCE: a path to reference Genbank file\n
     PATH: a path to a collection of snippy alignment files\n
@@ -404,12 +578,13 @@ def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_fi
     #import pdb; pdb.set_trace()
     # start by parsing genbank file, and loading features
     genes = Genes()
+    genes.load_genome( path = reference )
     if snippy != None and nb != None:
         genes.parse_snippycore(path = path, \
             corefn = core_filename, \
             nb = nb, \
             sample = snippy)
-        genes.load_features(path = reference, \
+        genes.load_features( \
                             gene_list = None, \
                             nb = nb, \
                             feature = feature)
@@ -420,12 +595,12 @@ def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_fi
                     corefn = core_filename, \
                     nb = nb, \
                     sample = 'all')
-        genes.load_features(path = reference, \
+        genes.load_features( \
                             gene_list = None, \
                             nb = None, \
                             feature = feature)
     else:
-        genes.load_features(path = reference, \
+        genes.load_features( \
                             gene_list = gene_list, \
                             nb = nb, \
                             feature = feature)

@@ -107,3 +107,7 @@ all_sites = data.frame( reference = "NCXXXX", pos = 1:n_bases )
 all_sites <- all_sites %>%
   dplyr::left_join( tmp_dist, c('pos' = 'pos' ) ) %>%
   tidyr::replace_na( list( partition = 5 ) )
+
+all_sites %>%
+  dplyr::group_by( partition ) %>%
+  dplyr::summarise( count = n() )
