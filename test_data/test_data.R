@@ -4,6 +4,7 @@
 library( dplyr )
 library( phyclust )
 library( ape )
+library( stringr )
 
 ################################################################################
 ### load sequence data
@@ -111,3 +112,27 @@ all_sites <- all_sites %>%
 all_sites %>%
   dplyr::group_by( partition ) %>%
   dplyr::summarise( count = n() )
+
+################################################################################
+## generate some mutated sequences
+
+set.seed( 42 )
+n_seq = 5
+theta = 0.1
+test_multifasta_file <- 'test_data/test_multi.fasta'
+n_ancestral_seq = 1
+anc_seq = code2nid( toupper( as.character( test_fasta )))
+seq_len = length( anc_seq )
+tree <- ape::read.tree( text = phyclust::ms(nsam = n_seq, nreps = 1, opts = '-T' )[3] )
+base_freq = c(0.25, 0.25, 0.25, 0.25 )
+kappa = 2
+sim_seqs <- gen.seq.HKY(rooted.tree = tree, 
+                        pi = base_freq,
+                        rate.scale = theta, 
+                        anc.seq = anc_seq, 
+                        kappa = kappa, L = seq_len )
+cat(stringr::str_c( sapply( 2:length(sim_seqs), function( i ) {
+  tmp <- stringr::str_split(sim_seqs[i], pattern = "\ +")
+  stringr::str_c( stringr::str_c( '>', tmp[[1]][1] ), tmp[[1]][2], sep = '\n' )
+}), collapse = '\n' ), file = test_multifasta_file )
+

@@ -1,6 +1,6 @@
 {
   "uploadOnSave": true,
-  "hostname": "trillian.mdu.unimelb.edu.au",
+  "hostname": "zaphod.mdu.unimelb.edu.au",
   "port": "22",
   "target": "/home/agoncalves/dev/beastify",
   "ignore": [
