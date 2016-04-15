@@ -9,12 +9,15 @@ Updated on 7 January 2016
 
 import click
 from Bio import SeqIO
+from Bio import AlignIO
 import os
 import random
 import re
 import sys
 import unittest
 import warnings
+import pandas as pd
+import numpy as np
 
 class Genes:
     '''
@@ -225,67 +228,36 @@ class Genes:
         A Pandas implementation might be faster:
         Here, we would mirror something close to the implementation done in R.
         '''
-        # find all features
-        n_features = 0
-        # creating the index position dictionary
-        self.index_positions = {}
-        self.index_positions['first_codon'] = []
-        self.index_positions['second_codon'] = []
-        self.index_positions['third_codon'] = []
-        self.index_positions['fourth_codon'] = []
-        self.index_positions['unannotated'] = []
-        self.index_positions['annotated'] = []
-        codon_indexes = ['first_codon', 'second_codon', 'third_codon']
-        for feature in self.reference.features:
-            if feature.type in feature_type:
-                n_features = n_features + 1
-                feature_start = feature.location.start
-                feature_end = feature.location.end + 1
-                feature_strand = feature.strand
-                # check if strand is different from -1 to 1, and if it is different, then issue warning (try to issue warning with locus tag) and
-                # add the positions to the index_positions['annotated'] so it they will be ignored. Then skip to next feature
-                # eventually, we can add support for different strand starting positions
-                if feature_strand not in [-1, 1]:
-                    try:
-                        warnings.warn( 'Feature with locus_tag {} had strand starting at {}. Beastify currently does not support correct implementation of this offset. Positions will be ignored'.format( feature.qualifiers['locus_tag'][0], feature_strand ) )
-                    except:
-                        warnings.warn( 'Feature between positions {}..{} had strand starting at {}. Beastify currently does not support correct implementation of this offset. Positions will be ignored'.format( feature_start, feature_end, feature_strand ) )
-                    self.index_positions['annotated'].append( range( feature_start + 1, feature_end + 1 ) )
-                    continue
-                # if the feature strand is 1 then assign the first_codon, second_codon, and third_codon position to 1,2,3
-                # else if the feature strand is -1 then assign the first_codon, second_codon, and third_codon position to 3,2,1
-                if feature_strand == 1:
-                    (fc, sc, tc) = (0,1,2)
-                else:
-                    (fc, sc, tc) = (2,1,0)
-                positions = {}
-                # generate the indexes
-                for codon_pos in [1,2,3]:
-                    positions[codon_pos] = range( feature_start + codon_pos, feature_end, 3 )
-                #### now run the checks
-                for codon_pos in [fc, sc, tc]:
-                    sites = positions[codon_pos + 1]
-                    for site in sites:
-                        if site in self.index_positions['annotated']:
-                            if site not in self.index_positions['fourth_codon']:
-                                self.index_positions['fourth_codon'].append( site )
-                                ## because we are not keeping track, we don't know where this site could be
-                                ## so we should try each, until successful. there might be a better way of doing this
-                                for cpos in codon_indexes:
-                                    try:
-                                        self.index_positions[ cpos ].remove( site )
-                                        break
-                                    except:
-                                        pass
-                            else:
-                                continue
-                        else:
-                            self.index_positions[ codon_indexes[codon_pos] ].append( site )
-                            self.index_positions['annotated'].append( site )
-        for k in self.index_positions.keys():
-            print( "Found {} sites in {}.".format( len( self.index_positions[k] ), k ) )
+        # using a pandas approach
+        # first step is to create a dataframe which unpacks individual CDS locations, and assigns codon positions
+        # here, we assign codon positions on whether the strand is 1 or -1. with one getting counted as [1,2,3], and -1 being counted as [3,2,1] from start
+        # at the moment, we assume that all CDS regions have a locus_tag --- that may not always be the case
+        # the next step is to filter out duplicated positions, and assign these positions a codon position of 4
+        gff_list = [ pd.DataFrame( {'positions': range( feature.location.start + 1, feature.location.end + 1 ),
+                                    'codon_pos': ( [1,2,3] if feature.strand == 1 else [3,2,1] ) * ((feature.location.end - feature.location.start + 1)/3),
+                                    'locus_tag': feature.qualifiers['locus_tag'][0] } ) for feature in self.reference.features if feature.type in feature_type ]
+        gff_df = pd.concat( gff_list, ignore_index = True )
+        # count the number of found features
+        n_features = len( gff_df.groupby('locus_tag').groups )
+        #find duplicated sites (needs at least pandas version 0.17)
+        ix_dup=gff_df.duplicated( 'positions', keep = False )
+        # make all codon_pos for duplicated sites = 4
+        gff_df.loc[ix_dup,'codon_pos'] = 4
+        # generate a deduplicated list
+        gff_dedup = gff_df[['positions', 'codon_pos']].drop_duplicates('positions')
+        # now create all positions dataframe
+        all_pos = pd.DataFrame( {'positions': np.arange( 1, len( self.reference ) + 1 )} )
+        # add codon positions, and fill nan with 5, and make integer
+        # this produces a single data frame with two columns: 'positions', and 'codon_pos'. Positions is counted from 1 to length of chromosome, and 'codon_pos' is one of [1,2,3,4,5] depending on where the base is relative to one or more CDS annotations
+        self.indexed_positions = pd.merge( all_pos, gff_dedup, how = 'left', on = 'positions' ).fillna(5).astype(int)
+        #import pdb; pdb.set_trace()
         print( "Found {} features that match CDS".format( n_features ) )
-        self.summary_index = n_features
+        self.summary_index = self.indexed_positions.groupby('codon_pos').size()
+        print( "Found {} sites in the first codon position".format( self.summary_index[1]))
+        print( "Found {} sites in the second codon position".format( self.summary_index[2]))
+        print( "Found {} sites in the third codon position".format( self.summary_index[3]))
+        print( "Found {} sites in that are in multiple CDS annotations".format( self.summary_index[4]))
+        print( "Found {} sites that are not in any annotation".format( self.summary_index[5]))
         return n_features
 
 class Isolate:
@@ -326,7 +298,7 @@ class Isolate:
     def load_seqRec(self, record, isolate_id):
         '''
         Load a sequence record. To be used when loading the reference, which
-        is first parsed using the Gene class
+        is first parsed using the Gene class, or from an alignment object.
         '''
         self.id = isolate_id
         self.seq = record
@@ -348,6 +320,12 @@ class Collection:
         self.isolates = {}
     def __getitem__(self, key):
         return self.isolates[key]
+    def __str__(self):
+        n_isolats = len( self.isolates.keys() )
+        if n_isolates  == 0:
+            print( 'An empty collection of isolates' )
+        else:
+            print( 'A collection of {} isolates.'.format( n_isolates ))
     def load_isolates(self, path, seq_file, ignore = None):
         '''
         Takes a path, and searches for snippy output files with the
@@ -372,6 +350,39 @@ class Collection:
             break
         print("Finished loading isolates!")
         return
+    def load_alignment( self, aln_file, aln_format ):
+        '''
+        Loads an alignment file. Tries to figure out whether the sizes are correct,
+        and how many polymorphic sites there.
+
+        Supported formats, any of those supported by BioPython:AlignIO
+
+        Tested formats, at the moment only multifasta
+        '''
+        # try to open alignment file
+        try:
+            aln_open = open( aln_file, 'r' )
+        except IOError:
+            print( "Could not open file {}.".format( aln_file ))
+            raise
+        except:
+            print( "Something while trying to open file {}.".format( aln_file ))
+            raise
+        # try to parse alignment file
+        try:
+            aln = AlignIO.read( aln_open, aln_format )
+        except ValueError:
+            print( "Opened the file {}, but could not load the alignment. Is the format {} correct?".format( aln_file, aln_format ))
+            raise
+        except:
+            print( "Something happend while trying to parse {}.".format( aln_file ))
+            raise
+        aln_list = list( aln )
+        for s in aln_list:
+            print( "Trying to load isolate {} into collection.".format( s.id ))
+            self.isolates[s.id] = Isolate()
+            self.isolates[s.id].load_seqRec( s, s.id )
+        print( "Successfully loaded {} sequences from file {}.".format( len( self.isolates.keys() ) ) )
     def load_reference(self, reference):
         '''
         Loading the reference to the collection to make sure it is included in
@@ -395,6 +406,12 @@ class Collection:
             else:
                 iso_info = i[1]
             self.info[isolate] = iso_info
+    def make_nexus( self, outfile, gene_obj):
+        '''
+        This function will take the indexed positions, and make
+        an alignment pandas DataFrame.
+        Ideally, indexed positions DataFrame would also include a locus_tag column, and an include column, which would have True/False for each position, depicting wether that position should be included or not. Positions not to be included might be recombinant sites, mobile element sites, or any other sites that should be masked.
+        '''
     def gen_align(self, outfile, gene_obj):
         '''
         iterates over the keys in the self.__dict__ to return
@@ -481,7 +498,6 @@ class Collection:
         fn.close()
         print("Finished parsing individual genes!")
         # creating an nexus file
-
         return
 
 class TestBeastify(unittest.TestCase):
@@ -494,9 +510,13 @@ class TestBeastify(unittest.TestCase):
         '''
         Create class Genes to test
         '''
+        # elements required for testing the class Gene
         reference = "test_data/test.gbk"
         self.genes = Genes()
         self.genes.load_genome( path = reference )
+        # elements required for testing the class Collection
+        self.alignment_multifasta = "test_data/test_multi.fasta"
+        self.isolate_collection = Collection()
     def test_genes_load_genome(self):
         '''
         Tests if Genbank file is loaded correctly
@@ -518,13 +538,20 @@ class TestBeastify(unittest.TestCase):
         Unannotated: 12,152
         '''
         self.genes.index_locations()
-        self.assertEqual( self.genes.summary_index, 83 )
+        self.assertEqual( list( self.genes.summary_index ), [29513, 29514, 29513, 109, 12152] )
+    def test_collection_load_multifasta_alignment(self):
+        '''
+        Test if multifasta alignment works. Should produce 5 sequences of length
+        equal to the reference sequence (100801bp).
+        '''
+        self.isolate_collection.load_alignment( self.alignment_multifasta, "fasta" )
+        self.assertEqual( len( self.isolate_collection.isolates ), 5 )
 
 def run_tests(ctx, param, value):
     if not value or ctx.resilient_parsing:
         return
     suite = unittest.TestLoader().loadTestsFromTestCase(TestBeastify)
-    unittest.TextTestRunner(verbosity=2).run(suite)
+    unittest.TextTestRunner(verbosity=2, buffer = True).run(suite)
     ctx.exit()
 
 
@@ -561,10 +588,15 @@ def run_tests(ctx, param, value):
                 help = "Whether to include the reference in the final out file (default: False)", \
                 is_flag = True, \
                 default = False)
+@click.option("--aln_file", \
+                help = "A sequence alignment file to give in lieu of folder with snippy output.")
+@click.option("--aln_file_format", \
+                help = "If providing an alignment file with --aln_file, set the format of the alignment. Any format supported by BioPython:AlignIO could be valid. Default: fasta. Tested: fasta.", \
+                default = 'fasta')
 @click.option("--test", is_flag=True, default=False, callback=run_tests, expose_value=False, is_eager = True)
 @click.argument("reference")
 @click.argument("path")
-def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_filename, seq_filename, exclude, inc_ref, test):
+def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_filename, seq_filename, exclude, inc_ref, test, aln_file, aln_file_format):
     '''
     REFERENCE: a path to reference Genbank file\n
     PATH: a path to a collection of snippy alignment files\n
