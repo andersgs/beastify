@@ -18,6 +18,7 @@ import unittest
 import warnings
 import pandas as pd
 import numpy as np
+import pdb
 
 class Genes:
     '''
@@ -382,7 +383,9 @@ class Collection:
             print( "Trying to load isolate {} into collection.".format( s.id ))
             self.isolates[s.id] = Isolate()
             self.isolates[s.id].load_seqRec( s, s.id )
-        print( "Successfully loaded {} sequences from file {}.".format( len( self.isolates.keys() ) ) )
+        print( "Successfully loaded {} sequences from file {}.".format( len( self.isolates.keys() ), aln_file ) )
+        aln_open.close()
+        return
     def load_reference(self, reference):
         '''
         Loading the reference to the collection to make sure it is included in
@@ -406,12 +409,22 @@ class Collection:
             else:
                 iso_info = i[1]
             self.info[isolate] = iso_info
-    def make_nexus( self, outfile, gene_obj):
+    def make_nexus( self, outfile ):
         '''
         This function will take the indexed positions, and make
         an alignment pandas DataFrame.
         Ideally, indexed positions DataFrame would also include a locus_tag column, and an include column, which would have True/False for each position, depicting wether that position should be included or not. Positions not to be included might be recombinant sites, mobile element sites, or any other sites that should be masked.
+
+        Pseudocode:
+        1. Create alignment pandas DataFrame
+        2. At this point, indexed positions DataFrame would only contain those positions to be included, no further processing required here. --- need to add methods to filter positions
+        3. Pick from the alignment all positions grouped by codon_pos --- here we sort positions by codon_pos, and just use this as an index on the columns of 1.
+        4. Generate the individual sequences for printing to nexus file
+        5. Figure out min and max index for each codon_pos type after ordering in order to print out the charset block
         '''
+        # create a pandas DataFrame of the alignment
+        self.aln_pd = pd.DataFrame( np.array([list(self.isolates[rec].seq) for rec in self.isolates], np.character, order="F"))
+
     def gen_align(self, outfile, gene_obj):
         '''
         iterates over the keys in the self.__dict__ to return
@@ -514,20 +527,23 @@ class TestBeastify(unittest.TestCase):
         reference = "test_data/test.gbk"
         self.genes = Genes()
         self.genes.load_genome( path = reference )
+        self.genes.index_locations()
         # elements required for testing the class Collection
         self.alignment_multifasta = "test_data/test_multi.fasta"
         self.isolate_collection = Collection()
-    def test_genes_load_genome(self):
+        self.isolate_collection.load_alignment( self.alignment_multifasta, "fasta" )
+        self.isolate_collection.make_nexus( 'test_data/test.nexus' )
+    def test_1genes_load_genome(self):
         '''
         Tests if Genbank file is loaded correctly
         '''
         self.assertEqual( self.genes.reference.id , 'NC_007795.1' )
-    def test_genes_genome_size(self):
+    def test_2genes_genome_size(self):
         '''
         Test if Genbank file loaded with appropriate size
         '''
         self.assertEqual( len( self.genes.reference ), 100801 )
-    def test_genes_index_locations(self):
+    def test_3genes_index_locations(self):
         '''
         Test if genome indexing works
         Should result in the following count for each partition in the test dataset (results based on R implementation)
@@ -537,15 +553,18 @@ class TestBeastify(unittest.TestCase):
         Fourth codon position: 109
         Unannotated: 12,152
         '''
-        self.genes.index_locations()
         self.assertEqual( list( self.genes.summary_index ), [29513, 29514, 29513, 109, 12152] )
-    def test_collection_load_multifasta_alignment(self):
+    def test_4collection_load_multifasta_alignment(self):
         '''
         Test if multifasta alignment works. Should produce 5 sequences of length
         equal to the reference sequence (100801bp).
         '''
-        self.isolate_collection.load_alignment( self.alignment_multifasta, "fasta" )
         self.assertEqual( len( self.isolate_collection.isolates ), 5 )
+    def test_5collection_make_pandas_align(self):
+        '''
+        Test if Pandas Alignment DataFrame is successfully made.
+        '''
+        self.assertEqual( self.isolate_collection.aln_pd.shape, (5, 100801 ) )
 
 def run_tests(ctx, param, value):
     if not value or ctx.resilient_parsing:
