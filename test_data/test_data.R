@@ -113,6 +113,11 @@ all_sites %>%
   dplyr::group_by( partition ) %>%
   dplyr::summarise( count = n() )
 
+all_sites <- all_sites %>%
+  dplyr::arrange( partition )
+
+head( all_sites )
+
 ################################################################################
 ## generate some mutated sequences
 
@@ -136,3 +141,19 @@ cat(stringr::str_c( sapply( 2:length(sim_seqs), function( i ) {
   stringr::str_c( stringr::str_c( '>', tmp[[1]][1] ), tmp[[1]][2], sep = '\n' )
 }), collapse = '\n' ), file = test_multifasta_file )
 
+################################################################################
+## read back multifasta to generate a test result for re-ordered alignment
+
+reorder_aln_file = 'test_data/test_reorder_multi.fasta'
+test_aln = ape::read.dna( file = test_multifasta_file, format = 'fasta' )
+test_aln_mat = as.character( test_aln )
+# reorder the bases
+test_aln_mat = test_aln_mat[, all_sites$pos ]
+test_aln_mat[, 1:10 ]
+cat( 
+  stringr::str_c( ">", row.names( test_aln_mat), "\n", apply( test_aln_mat, 1, function( line ) {
+  stringr::str_c( toupper( line ), collapse = "" )
+})),
+sep = '\n',
+  file = reorder_aln_file
+)
