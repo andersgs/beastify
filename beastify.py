@@ -8,6 +8,7 @@ Updated on 7 January 2016
 '''
 
 import click
+import collections
 from Bio import SeqIO
 from Bio import AlignIO
 import os
@@ -17,8 +18,12 @@ import sys
 import unittest
 import warnings
 import pandas as pd
+from pandas.util.testing import assert_frame_equal as pd_assert_df_equal
 import numpy as np
 import pdb
+import time
+
+VERSION=0.1
 
 class Genes:
     '''
@@ -318,7 +323,7 @@ class Isolate:
 
 class Collection:
     def __init__(self):
-        self.isolates = {}
+        self.isolates = collections.OrderedDict({})
     def __getitem__(self, key):
         return self.isolates[key]
     def __str__(self):
@@ -409,7 +414,7 @@ class Collection:
             else:
                 iso_info = i[1]
             self.info[isolate] = iso_info
-    def make_nexus( self, outfile ):
+    def make_nexus( self, outfile, gene_obj ):
         '''
         This function will take the indexed positions, and make
         an alignment pandas DataFrame.
@@ -422,9 +427,70 @@ class Collection:
         4. Generate the individual sequences for printing to nexus file
         5. Figure out min and max index for each codon_pos type after ordering in order to print out the charset block
         '''
+        # position index
+        #pdb.set_trace()
+        partitions = [1, 2, 3, 4, 5]
+        pos_index = gene_obj.indexed_positions
         # create a pandas DataFrame of the alignment
-        self.aln_pd = pd.DataFrame( np.array([list(self.isolates[rec].seq) for rec in self.isolates], np.character, order="F"))
-
+        self.aln_pd = pd.DataFrame( np.array([list(self.isolates[rec].seq) for rec in self.isolates], np.character, order="F"), \
+                                    index = [self.isolates[rec].id for rec in self.isolates])
+        # sort the columns so codon position categories are contiguous
+        pos_index = pos_index.sort_values( ['codon_pos', 'positions'])
+        new_column_order = pos_index.index
+        self.aln_pd = self.aln_pd.iloc[:, new_column_order ]
+        # figure out the ranges for each partition
+        #pdb.set_trace()
+        pos_index = pos_index.reset_index() # this generates a new index for the sorted DataFrame
+        pos_index = pos_index.groupby( 'codon_pos' ) # now, grouping by codon_pos will generate list
+                                                     # index positions
+        partition_ranges = {}
+        for partition in partitions:
+            partition_ranges[ partition ] = {}
+            partition_ranges[ partition ]['min'] = min( pos_index.groups[ partition ] ) + 1
+            partition_ranges[ partition ]['max'] = max( pos_index.groups[ partition ] ) + 1
+        # prep nexus file
+        sp = "    "
+        out = "#NEXUS\n"
+        out += "[Data from:\n"
+        out += "beastify.py version {}\n".format( VERSION )
+        out += "Date: {}\n".format( time.strftime("%d/%m/%Y") )
+        out += "Reference: {}\n".format( gene_obj.reference.id )
+        out += "]\n\n"
+        out+= "begin taxa;\n"
+        out += sp + "dimensions ntax={};\n".format(len(self.isolates.keys()))
+        out += sp + "taxlabels\n"
+        try:
+            for i in self.isolates.keys():
+                out += i + ":" + self.info[i] + "\n"
+        except:
+            for i in self.isolates.keys():
+                out += i + "\n"
+        out += sp + ";\n"
+        out += "end;\n\n"
+        out += "begin characters;\n"
+        out += sp + "dimensions nchar={};\n".format( self.aln_pd.shape[ 1 ])
+        out += sp + "format missing=? gap=- datatype=dna;\n"
+        out += sp + "gapmode=missing;\n"
+        out += sp + "matrix\n"
+        #same as above when outputting the tax labels
+        for i in self.aln_pd.index:
+            try:
+                ident = i + ":" + self.info[i]
+            except:
+                ident = i
+            out += "{:20} {}\n".format(ident, ''.join( self.aln_pd.loc[ i, : ] ) )
+        out += sp + ";\n"
+        out += "end;\n\n"
+        out += "begin assumptions;\n"
+        # added the sort to make sure the genes are in the same order in which
+        # they were concatenated
+        for partition in sorted(partition_ranges.keys()):
+            out += sp + "charset partition_{} = {}-{};\n".format( partition, partition_ranges[ partition ][ 'min' ], partition_ranges[ partition ][ 'max' ])
+        out += "end;\n"
+        fn = open(outfile, 'w')
+        fn.write(out)
+        fn.close()
+        print("Finished parsing individual genes!")
     def gen_align(self, outfile, gene_obj):
         '''
         iterates over the keys in the self.__dict__ to return
@@ -519,20 +585,27 @@ class TestBeastify(unittest.TestCase):
     To run:
     $> python -m unittest beastify.TestBeastify
     '''
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
         '''
         Create class Genes to test
         '''
         # elements required for testing the class Gene
         reference = "test_data/test.gbk"
-        self.genes = Genes()
-        self.genes.load_genome( path = reference )
-        self.genes.index_locations()
+        cls.genes = Genes()
+        cls.genes.load_genome( path = reference )
+        cls.genes.index_locations()
         # elements required for testing the class Collection
-        self.alignment_multifasta = "test_data/test_multi.fasta"
-        self.isolate_collection = Collection()
-        self.isolate_collection.load_alignment( self.alignment_multifasta, "fasta" )
-        self.isolate_collection.make_nexus( 'test_data/test.nexus' )
+        cls.alignment_multifasta = "test_data/test_multi.fasta"
+        cls.isolate_collection = Collection()
+        cls.isolate_collection.load_alignment( cls.alignment_multifasta, "fasta" )
+        cls.isolate_collection.make_nexus( 'test_data/test.nexus', cls.genes )
+        # load test alignment_multifasta
+        aln_ordered_open = open( "test_data/test_reorder_multi.fasta", 'r')
+        ordered_aln = AlignIO.read( aln_ordered_open, 'fasta' )
+        aln_ordered_open.close()
+        cls.aln_ordered_df = pd.DataFrame( np.array([list(rec) for rec in ordered_aln], np.character, order="F"), \
+                                           index = [rec.id for rec in ordered_aln] )
     def test_1genes_load_genome(self):
         '''
         Tests if Genbank file is loaded correctly
@@ -565,12 +638,17 @@ class TestBeastify(unittest.TestCase):
         Test if Pandas Alignment DataFrame is successfully made.
         '''
         self.assertEqual( self.isolate_collection.aln_pd.shape, (5, 100801 ) )
-
+    def test_6collection_check_alignment(self):
+        '''
+        Check if reordered matrix matches the expectation produced with R
+        '''
+        self.isolate_collection.aln_pd.columns = list( self.aln_ordered_df.columns )
+        self.assertTrue( pd_assert_df_equal( self.isolate_collection.aln_pd, self.aln_ordered_df ) == None  )
 def run_tests(ctx, param, value):
     if not value or ctx.resilient_parsing:
         return
     suite = unittest.TestLoader().loadTestsFromTestCase(TestBeastify)
-    unittest.TextTestRunner(verbosity=2, buffer = True).run(suite)
+    unittest.TextTestRunner(verbosity=2, buffer = False).run(suite)
     ctx.exit()
 
 
