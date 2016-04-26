@@ -149,7 +149,7 @@ test_aln = ape::read.dna( file = test_multifasta_file, format = 'fasta' )
 test_aln_mat = as.character( test_aln )
 # reorder the bases
 test_aln_mat = test_aln_mat[, all_sites$pos ]
-test_aln_mat[, 1:10 ]
+test_aln_mat[, 1:21 ]
 cat( 
   stringr::str_c( ">", row.names( test_aln_mat), "\n", apply( test_aln_mat, 1, function( line ) {
   stringr::str_c( toupper( line ), collapse = "" )
