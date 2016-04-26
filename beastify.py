@@ -1,3 +1,4 @@
+#!/home/agoncalves/dev/beastify/venv/bin/python
 '''
 beastify.py
 
@@ -23,7 +24,7 @@ import numpy as np
 import pdb
 import time
 
-VERSION=0.1
+VERSION="0.1-alpha"
 
 class Genes:
     '''
@@ -385,9 +386,10 @@ class Collection:
             raise
         aln_list = list( aln )
         for s in aln_list:
-            print( "Trying to load isolate {} into collection.".format( s.id ))
+            print( "Trying to load isolate {} into collection...".format( s.id )),
             self.isolates[s.id] = Isolate()
             self.isolates[s.id].load_seqRec( s, s.id )
+            print( "\033[92m" + "OK" + "\033[0m")
         print( "Successfully loaded {} sequences from file {}.".format( len( self.isolates.keys() ), aln_file ) )
         aln_open.close()
         return
@@ -490,7 +492,7 @@ class Collection:
         fn = open(outfile, 'w')
         fn.write(out)
         fn.close()
-        print("Finished parsing individual genes!")
+        print("All done! Happy BEASTing!")
     def gen_align(self, outfile, gene_obj):
         '''
         iterates over the keys in the self.__dict__ to return
@@ -575,7 +577,7 @@ class Collection:
         fn = open(outfile, 'w')
         fn.write(out)
         fn.close()
-        print("Finished parsing individual genes!")
+        print("All done. Happy BEASTing!")
         # creating an nexus file
         return
 
@@ -653,34 +655,37 @@ def run_tests(ctx, param, value):
 
 
 @click.command()
-@click.option("--nb", \
-                help = "Select N random genes from list", \
-                default = None,
-                type = int)
+# @click.option("--path", \
+#                 help = "Path to SNIPPY output folder.",
+#                 default = None)
+# @click.option("--nb", \
+#                 help = "Select N random genes from list", \
+#                 default = None,
+#                 type = int)
 @click.option("--out", \
                 help="Outfile name (default: out.nexus)", \
                 default = 'out.nexus')
-@click.option("--snippy", \
-                help="Use snippy-core, and filter with 'random' or 'top' or 'all' (default: all). If specified 'random' or 'top', then --n must be specified too.", \
-                default = "all")
-@click.option("--feature", \
-                help="Feature name to search in Genbank file (default: CDS)", \
-                default = "CDS")
+# @click.option("--snippy", \
+#                 help="Use snippy-core, and filter with 'random' or 'top' or 'all' (default: all). If specified 'random' or 'top', then --n must be specified too.", \
+#                 default = "all")
+# @click.option("--feature", \
+#                 help="Feature name to search in Genbank file (default: CDS)", \
+#                 default = "CDS")
 @click.option("--info",
                 help = "Path to a tab-delimited file with two or more columns. The first column has the isolate ID, and other columns have dates, location, etc. The information will be added to the isolate ID in the same order as the columns",\
                 default = None)
-@click.option("--core_filename", \
-                help = "If using --snippy, name of filenam containing SNP data (default: core.tab)",\
-                default = "core.tab")
-@click.option("--seq_filename", \
-                help = "The name of the snippy alignment file to search for (default: snps.consensus.subs.fa)", \
-                default = "snps.consensus.subs.fa")
-@click.option("--gene_list", \
-                help = "A list of genes to include in the nexus file.", \
-                default = None)
-@click.option("--exclude", \
-                help = "Comma separated list of isolates to exclude (default: None). Example: Iso22,Iso34", \
-                default = "")
+# @click.option("--core_filename", \
+#                 help = "If using --snippy, name of filenam containing SNP data (default: core.tab)",\
+#                 default = "core.tab")
+# @click.option("--seq_filename", \
+#                 help = "The name of the snippy alignment file to search for (default: snps.consensus.subs.fa)", \
+#                 default = "snps.consensus.subs.fa")
+# @click.option("--gene_list", \
+#                 help = "A list of genes to include in the nexus file.", \
+#                 default = None)
+# @click.option("--exclude", \
+#                 help = "Comma separated list of isolates to exclude (default: None). Example: Iso22,Iso34", \
+#                 default = "")
 @click.option("--inc_ref", \
                 help = "Whether to include the reference in the final out file (default: False)", \
                 is_flag = True, \
@@ -690,59 +695,63 @@ def run_tests(ctx, param, value):
 @click.option("--aln_file_format", \
                 help = "If providing an alignment file with --aln_file, set the format of the alignment. Any format supported by BioPython:AlignIO could be valid. Default: fasta. Tested: fasta.", \
                 default = 'fasta')
-@click.option("--test", is_flag=True, default=False, callback=run_tests, expose_value=False, is_eager = True)
+@click.option("--test", is_flag=True, default=False, callback=run_tests, expose_value=False, is_eager = True, \
+                help = "Run beastify tests and exit")
+@click.version_option( version = VERSION, message = "beastify v{}".format( VERSION ) )
 @click.argument("reference")
-@click.argument("path")
-def beastify(reference, path, gene_list, nb, out, snippy, feature, info, core_filename, seq_filename, exclude, inc_ref, test, aln_file, aln_file_format):
+def beastify(reference, out, info, inc_ref, aln_file, aln_file_format):
     '''
     REFERENCE: a path to reference Genbank file\n
-    PATH: a path to a collection of snippy alignment files\n
 
     By Anders Goncalves da Silva
     '''
     #transforming exclude list to a Python list
-    if exclude != None:
-        exclude = exclude.split(",")
-
-    #import pdb; pdb.set_trace()
+    # if exclude != None:
+    #     exclude = exclude.split(",")
     # start by parsing genbank file, and loading features
     genes = Genes()
     genes.load_genome( path = reference )
-    if snippy != None and nb != None:
-        genes.parse_snippycore(path = path, \
-            corefn = core_filename, \
-            nb = nb, \
-            sample = snippy)
-        genes.load_features( \
-                            gene_list = None, \
-                            nb = nb, \
-                            feature = feature)
-    elif snippy.lower() in ['random', 'top'] and nb == None:
-        raise ValueError("If specifying --snippy, then --nb must be specified too.")
-    elif snippy.lower() == 'all':
-        genes.parse_snippycore(path = path, \
-                    corefn = core_filename, \
-                    nb = nb, \
-                    sample = 'all')
-        genes.load_features( \
-                            gene_list = None, \
-                            nb = None, \
-                            feature = feature)
-    else:
-        genes.load_features( \
-                            gene_list = gene_list, \
-                            nb = nb, \
-                            feature = feature)
+    genes.index_locations()
     collection = Collection()
     if inc_ref:
         collection.load_reference(reference = genes.reference)
-    collection.load_isolates(path = path, \
-                            seq_file = seq_filename, \
-                            ignore = exclude)
+
+    if aln_file != None:
+        collection.load_alignment( aln_file, aln_file_format )
+    else:
+        raise ValueError( "beastify only accepts alignments for the moment." )
+    # elif snippy != None and nb != None:
+    #     genes.parse_snippycore(path = path, \
+    #         corefn = core_filename, \
+    #         nb = nb, \
+    #         sample = snippy)
+    #     genes.load_features( \
+    #                         gene_list = None, \
+    #                         nb = nb, \
+    #                         feature = feature)
+    # elif snippy.lower() in ['random', 'top'] and nb == None:
+    #     raise ValueError("If specifying --snippy, then --nb must be specified too.")
+    # elif snippy.lower() == 'all':
+    #     genes.parse_snippycore(path = path, \
+    #                 corefn = core_filename, \
+    #                 nb = nb, \
+    #                 sample = 'all')
+    #     genes.load_features( \
+    #                         gene_list = None, \
+    #                         nb = None, \
+    #                         feature = feature)
+    # else:
+    #     genes.load_features( \
+    #                         gene_list = gene_list, \
+    #                         nb = nb, \
+    #                         feature = feature)
+    # collection.load_isolates(path = path, \
+    #                         seq_file = seq_filename, \
+    #                         ignore = exclude)
     if info != None:
         print('#'*80)
         collection.add_info(info)
-    collection.gen_align(out, genes)
+    collection.make_nexus(out, genes)
     return
 
 if __name__=="__main__":
