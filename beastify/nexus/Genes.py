@@ -29,7 +29,7 @@ class Genes:
         try:
             genome = SeqIO.read(path, 'genbank')
         except IOError:
-            print("Could not open file {}".format(path))
+            print(("Could not open file {}".format(path)))
             raise
         except ValueError:
             # introduced this to mainly deal with the case when there a GENBANK
@@ -56,7 +56,7 @@ class Genes:
                 if nb != None:
                     feature_set = random.sample(feature_set, nb)
             except IOError:
-                print("Could not open file {}".format(feature_list))
+                print(("Could not open file {}".format(feature_list)))
         else:
             # if this function is run after parse snippy_core
             # otherwise, it will make an empty list. This will be a
@@ -103,20 +103,20 @@ class Genes:
                             features_ok += 1
                             ref_seq += str(feat.extract(genome.seq))
                         except:
-                            print("Incomplete CDS {}".format(feat.qualifiers[feature][0]))
-                            print("Feature's length divided by 3 had remainder = {}".format(len(feat) % 3))
+                            print(("Incomplete CDS {}".format(feat.qualifiers[feature][0])))
+                            print(("Feature's length divided by 3 had remainder = {}".format(len(feat) % 3)))
                             tmp = feat.extract(genome.seq)
-                            print("Features first codon was {}".format(tmp[0:3]))
-                            print("Features last codon was {}".format(tmp[-3:]))
-                            print(str(tmp))
+                            print(("Features first codon was {}".format(tmp[0:3])))
+                            print(("Features last codon was {}".format(tmp[-3:])))
+                            print((str(tmp)))
                             pass
                 except:
                     pass
-        print n_cds, n_gene, n_other
-        print("Found {} features".format(features_found))
-        print("of which {} were ok".format(features_ok))
+        print(n_cds, n_gene, n_other)
+        print(("Found {} features".format(features_found)))
+        print(("of which {} were ok".format(features_ok)))
         for k in self.features:
-            print("Found gene {}".format(k))
+            print(("Found gene {}".format(k)))
         fn = open(ref_fasta, 'w')
         fn.write(">ref_seq\n")
         fn.write(ref_seq + "\n")
@@ -155,7 +155,7 @@ class Genes:
         # 3. None of the above, meaning give all the CDS **NOT RECOMMENDED** as
         #   the input file would be too long
         if sample == 'random':
-            print("{}, {}, {}".format(len(cds_var), nb, len(cds_var) > nb))
+            print(("{}, {}, {}".format(len(cds_var), nb, len(cds_var) > nb)))
             self.snippy_list = random.sample(cds_var, nb)
         elif sample == 'top':
             count_snps_cds = {}
@@ -167,7 +167,19 @@ class Genes:
             self.snippy_list = sorted(count_snps_cds, key=count_snps_cds.get, reverse = True)[0:nb]
         else:
             self.snippy_list = cds_var
-        print("Found {} variable genes, and picked {}.".format(len(cds_var), len(self.snippy_list)))
+        print(("Found {} variable genes, and picked {}.".format(len(cds_var), len(self.snippy_list))))
+    
+    def _feature_parsing(self, feature):
+        '''
+        A function to return a pandas.DataFrame of a feature
+        '''
+        codon_pos = [1,2,3]
+        total_codons = int((feature.location.end - feature.location.start)/3)
+        data = {'positions': list(range(feature.location.start + 1, feature.location.end + 1)),
+         'codon_pos': (codon_pos if feature.strand == 1 else codon_pos[::-1]) * total_codons,
+         'locus_tag': feature.qualifiers['locus_tag'][0]}
+        return pd.DataFrame(data)
+
     def index_locations( self, feature_type = 'CDS' ):
         '''
         Function will index sites by codon position.
@@ -220,9 +232,7 @@ class Genes:
         # here, we assign codon positions on whether the strand is 1 or -1. with one getting counted as [1,2,3], and -1 being counted as [3,2,1] from start
         # at the moment, we assume that all CDS regions have a locus_tag --- that may not always be the case
         # the next step is to filter out duplicated positions, and assign these positions a codon position of 4
-        gff_list = [ pd.DataFrame( {'positions': range( feature.location.start + 1, feature.location.end + 1 ),
-                                    'codon_pos': ( [1,2,3] if feature.strand == 1 else [3,2,1] ) * ((feature.location.end - feature.location.start + 1)/3),
-                                    'locus_tag': feature.qualifiers['locus_tag'][0] } ) for feature in self.reference.features if feature.type in feature_type ]
+        gff_list = [ self._feature_parsing(feature) for feature in self.reference.features if feature.type in feature_type ]
         gff_df = pd.concat( gff_list, ignore_index = True )
         # count the number of found features
         n_features = len( gff_df.groupby('locus_tag').groups )
@@ -238,11 +248,11 @@ class Genes:
         # this produces a single data frame with two columns: 'positions', and 'codon_pos'. Positions is counted from 1 to length of chromosome, and 'codon_pos' is one of [1,2,3,4,5] depending on where the base is relative to one or more CDS annotations
         self.indexed_positions = pd.merge( all_pos, gff_dedup, how = 'left', on = 'positions' ).fillna(5).astype(int)
         #import pdb; pdb.set_trace()
-        print( "Found {} features that match CDS".format( n_features ) )
+        print(( "Found {} features that match CDS".format( n_features ) ))
         self.summary_index = self.indexed_positions.groupby('codon_pos').size()
-        print( "Found {} sites in the first codon position".format( self.summary_index[1]))
-        print( "Found {} sites in the second codon position".format( self.summary_index[2]))
-        print( "Found {} sites in the third codon position".format( self.summary_index[3]))
-        print( "Found {} sites in that are in multiple CDS annotations".format( self.summary_index[4]))
-        print( "Found {} sites that are not in any annotation".format( self.summary_index[5]))
+        print(( "Found {} sites in the first codon position".format( self.summary_index[1])))
+        print(( "Found {} sites in the second codon position".format( self.summary_index[2])))
+        print(( "Found {} sites in the third codon position".format( self.summary_index[3])))
+        print(( "Found {} sites in that are in multiple CDS annotations".format( self.summary_index[4])))
+        print(( "Found {} sites that are not in any annotation".format( self.summary_index[5])))
         return n_features
