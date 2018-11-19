@@ -22,7 +22,7 @@ class Isolate:
             self.seq.id = isolate_id
             self.id = self.seq.id
         except IOError:
-            print "Could not parse file {}".format(path)
+            print("Could not parse file {}".format(path))
             raise
         except ValueError:
             # introduced this to mainly deal with the case when there a FASTA
@@ -30,7 +30,7 @@ class Isolate:
             # possibly not the most general approach but it solves the issue
             # at hand.
             print("#### WARNING ####")
-            print("Found more than one sequence in the FASTA file for {}".format(isolate_id))
+            print(("Found more than one sequence in the FASTA file for {}".format(isolate_id)))
             print("Picking the first one, and ignoring the rest.")
             for seq in SeqIO.parse(path, "fasta"):
                 self.seq = seq
