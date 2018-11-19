@@ -10,8 +10,8 @@ import pandas as pd
 import numpy as np
 import time
 
-from Isolate import Isolate
-import global_def
+from beastify.nexus.Isolate import Isolate
+from beastify import __VERSION__ as version_string
 
 class Collection:
     def __init__(self):
@@ -21,11 +21,11 @@ class Collection:
     def __getitem__(self, key):
         return self.isolates[key]
     def __str__(self):
-        n_isolats = len( self.isolates.keys() )
+        n_isolats = len( list(self.isolates.keys()) )
         if n_isolates  == 0:
             print( 'An empty collection of isolates' )
         else:
-            print( 'A collection of {} isolates.'.format( n_isolates ))
+            print(( 'A collection of {} isolates.'.format( n_isolates )))
     def load_isolates(self, path, seq_file, ignore = None):
         '''
         Takes a path, and searches for snippy output files with the
@@ -39,14 +39,14 @@ class Collection:
         for root, dirs, files in list_reads:
             for d in dirs:
                 if d in ignore:
-                    print("Skipping {}".format(d))
+                    print(("Skipping {}".format(d)))
                     continue
-                print("Trying to load {} at {}".format(d, os.path.join(path, d, default_file)))
+                print(("Trying to load {} at {}".format(d, os.path.join(path, d, default_file))))
                 tmp_fn = os.path.join(path, d, default_file)
                 self.isolates[d] = Isolate()
                 self.isolates[d].load_fasta(tmp_fn, d)
                 print("Successfully loaded: ")
-                print(self.isolates[d])
+                print((self.isolates[d]))
             break
         self.seq_path = path
         print("Finished loading isolates!")
@@ -62,30 +62,30 @@ class Collection:
         '''
         # try to open alignment file
         try:
-            aln_open = open( aln_file, 'r' )
+            aln_open = open( aln_file, 'rt' )
         except IOError:
-            print( "Could not open file {}.".format( aln_file ))
+            print(( "Could not open file {}.".format( aln_file )))
             raise
         except:
-            print( "Something went wrong while trying to open file {}.".format( aln_file ))
+            print(( "Something went wrong while trying to open file {}.".format( aln_file )))
             raise
         # try to parse alignment file
         try:
             aln = AlignIO.read( aln_open, aln_format )
         except ValueError:
-            print( "Opened the file {}, but could not load the alignment. Is the format {} correct?".format( aln_file, aln_format ))
+            print(( "Opened the file {}, but could not load the alignment. Is the format {} correct?".format( aln_file, aln_format )))
             raise
         except:
-            print( "Something happend while trying to parse {}.".format( aln_file ))
+            print(( "Something happend while trying to parse {}.".format( aln_file )))
             raise
         self.aln_file = aln_file
-        aln_list = list( aln )
+        aln_list = aln
         for s in aln_list:
-            print( "Trying to load isolate {} into collection...".format( s.id )),
+            print(( "Trying to load isolate {} into collection...".format( s.id )), end=' ')
             self.isolates[s.id] = Isolate()
             self.isolates[s.id].load_seqRec( s, s.id )
-            print( "\033[92m" + "OK" + "\033[0m")
-        print( "Successfully loaded {} sequences from file {}.".format( len( self.isolates.keys() ), aln_file ) )
+            print(( "\033[92m" + "OK" + "\033[0m"))
+        print(( "Successfully loaded {} sequences from file {}.".format( len( list(self.isolates.keys()) ), aln_file ) ))
         aln_open.close()
         return
     def load_reference(self, reference):
@@ -111,6 +111,15 @@ class Collection:
             else:
                 iso_info = i[1]
             self.info[isolate] = iso_info
+
+    def _aln2df(self):
+        '''
+        Transform the data from different isolates in to a pandas.DataFrame
+        '''
+        self.aln_pd = pd.DataFrame(np.array([list(self.isolates[rec].seq) for rec in self.isolates], order="F"),
+                     index=[self.isolates[rec].id for rec in self.isolates])
+
+
     def make_nexus( self, outfile, gene_obj, subsample = None, subsample_seed = 42, partitions = [1,2,3,4,5], mask = None ):
         '''
         This function will take the indexed positions, and make
@@ -125,12 +134,10 @@ class Collection:
         5. Figure out min and max index for each codon_pos type after ordering in order to print out the charset block
         '''
         # position index
-        #pdb.set_trace()
         #partitions = [1, 2, 3, 4, 5]
         pos_index = gene_obj.indexed_positions
         # create a pandas DataFrame of the alignment
-        self.aln_pd = pd.DataFrame( np.array([list(self.isolates[rec].seq) for rec in self.isolates], np.character, order="F"), \
-                                    index = [self.isolates[rec].id for rec in self.isolates])
+        self._aln2df()
         # sort the columns so codon position categories are contiguous
         #import pdb; pdb.set_trace()
         if mask != None:
@@ -139,9 +146,9 @@ class Collection:
             exclude = []
             for i in positions.iterrows():
                 exclude.extend(np.arange(i[1][1],i[1][2]+1))
-            print('Found {} sites to mask.'.format( len(exclude) ) )
+            print(('Found {} sites to mask.'.format( len(exclude) ) ))
             pos_index = pos_index.loc[~pos_index.positions.isin(exclude)]
-            print('New alignment has {} sites.'.format(pos_index.shape[0]))
+            print(('New alignment has {} sites.'.format(pos_index.shape[0])))
         pos_index = pos_index.sort_values( ['codon_pos', 'positions'])
         new_column_order = pos_index.index
         self.aln_pd = self.aln_pd.iloc[:, new_column_order ]
@@ -176,7 +183,7 @@ class Collection:
         sp = "    "
         out = "#NEXUS\n"
         out += "[Data from:\n"
-        out += "beastify.py version {}\n".format( global_def.VERSION )
+        out += "beastify.py version {}\n".format( version_string )
         out += "Date: {}\n".format( time.strftime("%d/%m/%Y") )
         out += "Reference: {}\n".format( gene_obj.reference.id )
         if (subsample != None):
@@ -187,13 +194,13 @@ class Collection:
             out += 'Isolate data was parsed from folder: {}\n'.format(self.seq_path)
         out += "]\n\n"
         out+= "begin taxa;\n"
-        out += sp + "dimensions ntax={};\n".format(len(self.isolates.keys()))
+        out += sp + "dimensions ntax={};\n".format(len(list(self.isolates.keys())))
         out += sp + "taxlabels\n"
         try:
-            for i in self.isolates.keys():
+            for i in list(self.isolates.keys()):
                 out += i + ":" + self.info[i] + "\n"
         except:
-            for i in self.isolates.keys():
+            for i in list(self.isolates.keys()):
                 out += i + "\n"
         out += sp + ";\n"
         out += "end;\n\n"
@@ -231,7 +238,7 @@ class Collection:
         #import pdb; pdb.set_trace()
         concat_seqs = {}
         gene_lens = {}
-        for i in self.isolates.keys():
+        for i in list(self.isolates.keys()):
             genome = self.isolates[i]
             genome.get_genes(gene_obj)
             concat_seqs[i] = ""
@@ -240,13 +247,13 @@ class Collection:
                 try:
                     gene_lens[g]
                     if (gen_lens[g] != len(genome.genes[g])):
-                        print("Gene {} has different length in isolate {} than in previously recorded: {}.".format(g, len(genome.genes[g], gen_lens[g])))
+                        print(("Gene {} has different length in isolate {} than in previously recorded: {}.".format(g, len(genome.genes[g], gen_lens[g]))))
                 except:
                     gene_lens[g] = len(genome.genes[g])
                     pass
-        seq_len = len(concat_seqs[concat_seqs.keys()[0]])
+        seq_len = len(concat_seqs[list(concat_seqs.keys())[0]])
         var_sites = 0
-        for n in xrange(seq_len):
+        for n in range(seq_len):
             tmp = []
             for i in concat_seqs:
                 tmp.append(concat_seqs[i][n])
@@ -256,7 +263,7 @@ class Collection:
                 var_sites += 1
                 # print("Site {} is variable.".format(n))
                 # print(tmp)
-        print("Total variable sites found: {}.".format(var_sites))
+        print(("Total variable sites found: {}.".format(var_sites)))
         # outputting nexus file
         sp = "    "
         out = "#NEXUS\n"
@@ -264,22 +271,22 @@ class Collection:
         out += "beastify.py\n"
         out += "]\n\n"
         out+= "begin taxa;\n"
-        out += sp + "dimensions ntax={};\n".format(len(self.isolates.keys()))
+        out += sp + "dimensions ntax={};\n".format(len(list(self.isolates.keys())))
         out += sp + "taxlabels\n"
         # if self.dates exists, then add it to the id name
         # otherwise, ignore
         # for i in self.dates:
         #     print(i, self.dates[i])
         try:
-            for i in self.isolates.keys():
+            for i in list(self.isolates.keys()):
                 out += i + ":" + self.info[i] + "\n"
         except:
-            for i in self.isolates.keys():
+            for i in list(self.isolates.keys()):
                 out += i + "\n"
         out += sp + ";\n"
         out += "end;\n\n"
         out += "begin characters;\n"
-        out += sp + "dimensions nchar={};\n".format(len(concat_seqs[concat_seqs.keys()[0]]))
+        out += sp + "dimensions nchar={};\n".format(len(concat_seqs[list(concat_seqs.keys())[0]]))
         out += sp + "format missing=? gap=- datatype=dna;\n"
         out += sp + "gapmode=missing;\n"
         out += sp + "matrix\n"
