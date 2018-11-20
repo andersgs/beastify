@@ -1,22 +1,14 @@
-#!/home/agoncalves/dev/beastify/venv/bin/python
 '''
-beastify.py
-
-Anders Goncalves da Silva
-October 2015
-
-Updated on 7 January 2016
+The main script for beastify
 '''
 
-import click
 import os
 import random
 import re
 import sys
 import unittest
-import warnings
-from pandas.util.testing import assert_frame_equal as pd_assert_df_equal
-import pdb
+
+import click
 
 from beastify.nexus.Genes import Genes
 from beastify.nexus.Collection import Collection
