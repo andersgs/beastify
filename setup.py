@@ -17,7 +17,7 @@ README = (HERE / "README.md").read_text()
 setup(
     name="beastify",
     version=version_string,
-    description="Parition your alignment into distinct codon positions and non-coding positions",
+    description="Partition your alignment into distinct codon positions and non-coding positions",
     long_description=README,
     long_description_content_type="text/markdown",
     url="https://github.com/andersgs/beastify",
