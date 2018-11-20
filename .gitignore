@@ -6,3 +6,4 @@
 .remote-sync.json
 __pycache__
 *.bak
+Pipfile*
